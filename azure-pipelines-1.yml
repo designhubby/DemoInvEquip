@@ -1,0 +1,195 @@
+# Node.js with React
+# Build a Node.js project that uses React.
+# Add steps that analyze code, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/javascript
+
+trigger:
+  branches:
+    include:
+    - master
+  paths:
+    include:
+    - frontend
+
+parameters:
+  - name: EmailforNotification
+    displayName: 'Email for Notification, delimter ;'
+    type: string
+    default: kinglaugood@gmail.com
+
+
+# SetVariables
+variables:
+  directory: frontend
+
+
+stages:
+
+  - stage: Build
+    displayName: Stage Build
+    pool:
+      vmImage: 'windows-latest'
+      
+    jobs:
+
+      - job: BuildWithNode  
+        steps:
+        - task: NodeTool@0
+          inputs:
+            versionSpec: '16.x'
+          displayName: 'Install Node.js'
+
+        - script: npm install
+          workingDirectory: frontend
+          displayName: 'npm install'
+
+        - script: npm run build
+          workingDirectory: frontend
+          displayName: 'npm run build'
+
+        - powershell: Copy-Item -Path 'frontend\staticwebapp.config.json' -Destination 'frontend\build\staticwebapp.config.json'
+        - powershell: Get-ChildItem frontend\build -recurse | % {$_.fullname}
+
+        - task: ArchiveFiles@2
+          displayName: Archive Build Files
+          inputs: 
+            rootFolderOrFile: '$(Pipeline.Workspace)\s\frontend\build'
+            includeRootFolder: false
+            archiveType: zip
+            archiveFile: '$(Pipeline.Workspace)\s\frontend\build\archive\build.zip'
+            replaceExistingArchive: true
+
+
+        - task: PublishPipelineArtifact@1
+          inputs:
+            targetPath: '$(Pipeline.Workspace)\s\frontend\build\archive'
+            artifact: 'drop.FrontOffice'
+            publishLocation: 'pipeline'
+
+  - stage: ManualValidationThenReleaseToDEV
+    displayName: Stage ManualValidation & ReleaseToDEV
+
+
+    jobs:
+
+      - job: jobPowershellDelimitConvert
+
+        pool:
+         vmImage: 'windows-latest'
+        steps:
+        - task:  PowerShell@2
+          name: PSConvertEmailList
+          displayName: 'Convert Emails to Multi-line'
+          inputs: 
+           targetType: 'filePath'
+           filePath: $(System.DefaultWorkingDirectory)\ps_email_separator.ps1
+           arguments: ${{parameters.EmailforNotification}}
+
+      - job: jobShowCrossjobVariable
+        dependsOn: jobPowershellDelimitConvert
+        variables:
+          - name: OutputVariableEmailsNotify
+            value: $[dependencies.jobPowershellDelimitConvert.outputs['PSConvertEmailList.INPUT_NotifyEmails']]
+        pool:
+          vmImage: 'windows-latest'
+        steps:
+
+          - task: PowerShell@2
+            inputs:
+              targetType: inline
+              script: echo DelimitedEmails $(OutputVariableEmailsNotify)
+
+      - job: jobManualValidationDEV
+        dependsOn: jobPowershellDelimitConvert
+        variables:
+          - name: OutputVariableEmailsNotify
+            value: $[dependencies.jobPowershellDelimitConvert.outputs['PSConvertEmailList.INPUT_NotifyEmails']]
+        pool: server
+        steps: 
+          - task: ManualValidation@0
+            timeoutInMinutes: 1
+            inputs:
+              notifyUsers: $(OutputVariableEmailsNotify)
+              onTimeout: resume
+              instructions: 'Please validate the build configuration and resume'
+
+      - job: DeployToAzureStaticWebApp
+        displayName: DeployStaticWebApp
+        pool:
+          vmImage: 'ubuntu-latest'
+        dependsOn: jobManualValidationDEV
+        variables:
+        - group: Azure-Static-Web-Apps-orange-field-0a431810f-variable-group
+        steps:
+          - download: current
+            artifact: 'drop.FrontOffice'
+
+          - task: ExtractFiles@1
+            displayName: ExtractFromPipelineArtifact
+            inputs:
+              archiveFilePatterns: $(Pipeline.Workspace)/**/*.zip
+              destinationFolder: $(Pipeline.Workspace)/drop.FrontOffice/extracted
+          - task: PowerShell@2
+            displayName: 'Show File List'
+            inputs:
+              targetType: inline
+              workingDirectory: $(Pipeline.Workspace)/drop.FrontOffice
+              script: 'Get-ChildItem -recurse | % {$_.fullname}'
+          - task: PowerShell@2
+            displayName: 'Copy Specific Config.env.js to public folder'
+            inputs:
+              targetType: inline
+              script: Copy-Item -Path "$(Pipeline.Workspace)/drop.FrontOffice/extracted/env/config.development.js" -Destination "$(Pipeline.Workspace)/drop.FrontOffice/extracted/config.js"
+          - task: AzureStaticWebApp@0
+            inputs:
+                app_location: /drop.FrontOffice/extracted
+                app_build_command: 'build'
+                verbose: true
+                skip_app_build: true
+                skip_api_build: true
+                azure_static_web_apps_api_token: '$(AZURE_STATIC_WEB_APPS_API_TOKEN_ORANGE_FIELD_0A431810F)'
+                workingDirectory: $(Pipeline.Workspace)
+
+
+  - stage: ManualValidationThenReleaseToQA
+    displayName: Stage ManualValidation & ReleaseToQA
+    jobs:
+      - job: jobManualValidationDEV
+        pool: server
+        steps:
+          - task: ManualValidation@0
+            timeoutInMinutes: 1
+            inputs:
+              notifyUsers: $(OutputVariableEmailsNotify)
+              instructions: "Please validate the DEV build before release to QA"
+              onTimeout: resume
+      - job: jobDeployToStaticWebAppQA
+        pool: 
+          vmImage: 'ubuntu-latest'
+        dependsOn: jobManualValidationDEV
+        variables: 
+         - group: Azure-Static-Web-Apps-orange-field-0a431810f-variable-group
+        steps: 
+          - download: current
+            artifact: 'drop.FrontOffice'
+          - task: ExtractFiles@1
+            displayName: ExtractFromPipelineArifact
+            inputs:
+              archiveFilePatterns: $(Pipeline.Workspace)/**/*.zip
+              destinationFolder: $(Pipeline.Workspace)/drop.FrontOffice/extracted
+          - powershell: Get-ChildItem $(Pipeline.Workspace) -recurse | % {$_.fullname}
+
+          - task: PowerShell@2
+            displayName: 'Copy Specific Config.env.js to public folder'
+            inputs:
+              targetType: inline
+              script: Copy-Item -Path "$(Pipeline.Workspace)/drop.FrontOffice/extracted/env/config.QA.js" -Destination "$(Pipeline.Workspace)/drop.FrontOffice/extracted/config.js"
+          - task: AzureStaticWebApp@0
+            inputs:
+                app_location: /drop.FrontOffice/extracted
+                app_build_command: 'build'
+                verbose: true
+                skip_app_build: true
+                skip_api_build: true
+                azure_static_web_apps_api_token: '$(AZURE_STATIC_WEB_APPS_API_TOKEN_FRONTEND_QA)'
+                workingDirectory: $(Pipeline.Workspace)

@@ -1,0 +1,112 @@
+# ASP.NET Core (.NET Framework)
+# Build and test ASP.NET Core projects targeting the full .NET Framework.
+# Add steps that publish symbols, save build artifacts, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
+
+trigger:
+  branches:
+    include:
+      - master
+  paths:
+    include:
+      - backend
+
+parameters:
+  - name: 'EmailValidation'
+    displayName: 'EmailValidation Contact'
+    type: string
+    default: kinglaugood@gmail.com
+
+variables:
+  solution: '**/*.sln'
+  buildPlatform: 'Any CPU'
+  buildConfiguration: 'Release'
+  email: 'king.lau@gmail.com'
+
+stages:
+  - stage: Build
+    displayName: Stage Build
+    pool:
+      vmImage: 'windows-latest'
+    jobs:
+      - job: A
+        steps:
+        - task: UseDotNet@2
+          inputs: 
+            version: '6.0.x'
+        - task: DotNetCoreCLI@2
+          inputs:
+            command: 'publish'
+            publishWebProjects: false
+            projects: '**/InvEquip.csproj'
+            arguments: '--configuration $(buildConfiguration) -o $(Build.ArtifactStagingDirectory)'
+            zipAfterPublish: True
+        - task: PowerShell@2
+          displayName: List Files Post Publish
+          inputs:
+            targetType: 'inline'
+            script: 'Get-ChildItem $(Build.ArtifactStagingDirectory) | % {$_.fullname}'
+        - task: PublishPipelineArtifact@1
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)'
+            artifact: 'drop.BackOffice'
+            publishLocation: 'pipeline'
+
+  - stage: ManualValidationThenReleaseToDEV
+    displayName: ManualValidation
+    jobs: 
+    - job: jobManualValidationDEV
+      pool: server
+      steps:
+      - task: ManualValidation@0
+        timeoutInMinutes: 1 # task times out in 1 day
+        inputs:
+          notifyUsers: ${{parameters.EmailValidation}}
+          instructions: 'Please validate the build configuration and resume'
+          onTimeout: resume
+    - job: 'ReleaseJobtoDEV'
+      pool:
+       vmImage: 'windows-latest'
+      dependsOn: jobManualValidationDEV
+      steps:
+        - download: current
+          artifact: 'drop.BackOffice'
+        - task: AzureRmWebAppDeployment@4
+          inputs:
+            ConnectionType: 'AzureRM'
+            azureSubscription: 'EquipInv Connection'
+            appType: 'webApp'
+            WebAppName: 'app-EquipInv-BackOffice-DEV'
+            packageForLinux: '$(Pipeline.Workspace)/drop.BackOffice/*.zip'
+            enableCustomDeployment: true
+            DeploymentType: 'webDeploy'
+  - stage: ManualValidationThenReleaseToQA
+    displayName: ManualValidationQA
+    jobs:
+    - job: jobManualValidateQA
+      pool: server
+      steps:
+      - task: ManualValidation@0
+        timeoutInMinutes: 1440
+        inputs:
+          notifyUsers: ${{parameters.EmailValidation}}
+          instructions: 'Please validate that DEV build is ready for QA'
+          onTimeout: reject
+    - job: ReleaseToQA
+      pool:
+        vmImage: 'windows-latest'    
+      dependsOn: jobManualValidateQA
+      steps:
+        - download: current
+          artifact: 'drop.BackOffice'
+        - task: AzureRmWebAppDeployment@4
+          inputs:
+            ConnectionType: 'AzureRM'
+            azureSubscription: 'EquipInv Connection'
+            appType: 'webApp'
+            WebAppName: 'app-EquipInv-BackOffice-QA'
+            packageForLinux: '$(Pipeline.Workspace)/drop.BackOffice/*.zip'
+            enableCustomDeployment: true
+            DeploymentType: 'webDeploy'
+
+

@@ -1,0 +1,1 @@
+var REACT_APP_BaseURL='https://localhost:44337/api'

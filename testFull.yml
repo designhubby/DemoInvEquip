@@ -1,0 +1,92 @@
+# cv # Node.js with React
+# Build a Node.js project that uses React.
+# Add steps that analyze code, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/javascript
+
+trigger:
+  branches:
+    include:
+    - master
+  paths:
+    include:
+    - frontend
+
+parameters:
+  - name: EmailforNotification
+    displayName: 'Email for Notification, delimter ;'
+    type: string
+    default: kinglaugood@gmail.com
+
+
+# SetVariables
+variables:
+  directory: frontend
+
+
+stages:
+
+  - stage: Build
+    displayName: Stage Build
+    pool:
+      vmImage: 'windows-latest'
+      
+    jobs:
+
+      - job: BuildWithNode  
+        steps:
+        - task: NodeTool@0
+          inputs:
+            versionSpec: '16.x'
+          displayName: 'Install Node.js'
+
+        - script: npm install
+          workingDirectory: frontend
+          displayName: 'npm install'
+
+        - script: npm run build
+          workingDirectory: frontend
+          displayName: 'npm run build'
+        - task: PowerShell@2
+          displayName: 'Show Files Post Build'
+          inputs:
+            targetType: inline
+            script: 'Get-ChildItem frontend\build -recurse | % {$_.fullname}'
+
+        - task: PublishPipelineArtifact@1
+          inputs:
+            targetPath: '$(Pipeline.Workspace)'
+            artifact: 'drop.FrontOffice'
+            publishLocation: 'pipeline'
+
+  - stage: ManualValidationThenReleaseToDEV
+    displayName: Stage_ManualValidationThenReleaseToDEV
+
+
+    jobs:
+
+      - job: DeployToAzureStaticWebApp
+        displayName: DeployStaticWebApp
+        pool:
+          vmImage: 'ubuntu-latest'
+        variables:
+        - group: Azure-Static-Web-Apps-orange-field-0a431810f-variable-group
+        steps:
+          - download: current
+            artifact: 'drop.FrontOffice'
+          - bash: cd $(Pipeline.Workspace); echo $(ls)
+          - bash: cd $(Pipeline.Workspace)/drop.FrontOffice; echo $(ls)
+          - task: PowerShell@2
+            inputs:
+              targetType: inline
+              script: 'Get-ChildItem $(Pipeline.Workspace)/drop.FrontOffice/s/frontend/build | % {$_.fullname}'
+          - task: AzureStaticWebApp@0
+            inputs:
+                app_location: /drop.FrontOffice/s/frontend/build
+                app_build_command: 'build'
+                verbose: true
+                skip_app_build: true
+                skip_api_build: true
+                azure_static_web_apps_api_token: '$(AZURE_STATIC_WEB_APPS_API_TOKEN_ORANGE_FIELD_0A431810F)'
+                workingDirectory: $(Pipeline.Workspace)
+
+

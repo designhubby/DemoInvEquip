@@ -1,0 +1,34 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+  - stage: A
+    jobs:
+      - job: jobSetVariable
+        steps:
+          - task: PowerShell@2
+            name: taskSetVariable
+            inputs: 
+             targetType: inline
+             script: Write-Host "##vso[task.setvariable variable=INPUT_NotifyEmails;isoutput=true]TestDataLiteral"
+      - job: jobShowVariable
+        dependsOn: jobSetVariable
+        variables:
+        - name: outputVariable
+          value: $[dependencies.jobSetVariable.outputs['taskSetVariable.INPUT_NotifyEmails']]
+        steps:
+          - task: PowerShell@2
+            name: ShowVariable
+            inputs:
+             targetType: inline
+             script: echo DelimitedEmails $(outputVariable)
+
+

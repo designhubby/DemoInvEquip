@@ -1,0 +1,1 @@
+var REACT_APP_BaseURL='https://app-equipinv-backoffice-dev.azurewebsites.net/api'
